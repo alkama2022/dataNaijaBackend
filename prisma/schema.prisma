@@ -1,0 +1,251 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String    @id @default(uuid())
+  phone             String    @unique
+  email             String?   @unique
+  passwordHash      String
+  fullName          String
+  // Balance stored in Naira (whole units) to match the Flutter frontend exactly.
+  // Example: 5000 = ₦5,000
+  balance           Int       @default(0)
+  kycVerified       Boolean   @default(false)
+  kycType           String?   // 'BVN' or 'NIN'
+  kycId             String?
+  fingerprintEnabled Boolean   @default(false)
+  balanceHidden     Boolean   @default(false)
+  referralCode      String    @unique
+  referredBy        String?
+  referralBonus     Int       @default(0)
+  // Admin panel. `isAdmin` grants access to /admin, `isSuspended` freezes
+  // the account, and `role` separates agents from ordinary customers.
+  isAdmin           Boolean   @default(false)
+  isSuspended       Boolean   @default(false)
+  role              String    @default("User") // 'User' | 'Agent'
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  transactions      Transaction[]
+  referrals         Referral[]
+  notifications     Notification[]
+  autoBuySchedules  AutoBuySchedule[]
+  autoBuyExecutions AutoBuyExecution[]
+}
+
+model Transaction {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String
+  subtitle    String
+  amount      Int      // positive = credit, negative = debit (in Naira)
+  status      String   // 'Successful' | 'Pending' | 'Failed'
+  phone       String
+  ref         String   @unique
+  typeKey     String   // 'd' = data, 'a' = airtime, 'w' = wallet
+  date        DateTime @default(now())
+  // Set when the debit was made by an Auto-Buy schedule so the transaction
+  // can be traced back to the rule that produced it.
+  autoBuyScheduleId String?
+  // The upstream provider that delivered the bundle. Used by the admin
+  // panel to measure provider reliability and fault rate.
+  providerId        String?
+  // The bundle that was bought. Used by the admin panel to work out the
+  // margin (what we sold it for minus what the provider charged).
+  planId            String?
+  // Set when the client sent an `Idempotency-Key`. The key is scoped to
+  // the customer, so a retried request returns the first result instead
+  // of charging again.
+  idempotencyKey    String?  @unique
+
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  autoBuySchedule AutoBuySchedule?  @relation(fields: [autoBuyScheduleId], references: [id], onDelete: SetNull)
+  provider        Provider?         @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  plan            DataPlan?         @relation(fields: [planId], references: [id], onDelete: SetNull)
+}
+
+model Network {
+  id          String   @id @default(uuid())
+  name        String   // MTN, Airtel, Glo, 9mobile
+  abbreviation String   // MTN, Ai, glo, 9m
+  bgColor     String
+  fgColor     String
+  isActive    Boolean  @default(true)
+  plans       DataPlan[]
+}
+
+model DataPlan {
+  id          String   @id @default(uuid())
+  networkId   String
+  type        String   // 'SME', 'SME2', 'Gifting', 'Corporate Gifting', 'Awoof'
+  gb          String   // '1GB', '2GB', etc.
+  days        String   // '30 Days', '7 Days', etc.
+  price       Int      // the price we sell it for, in Naira
+  isHot       Boolean  @default(false)
+  isActive    Boolean  @default(true)
+
+  network     Network  @relation(fields: [networkId], references: [id], onDelete: Cascade)
+  costs       ProviderPlanCost[]
+  transactions Transaction[]
+}
+
+// ── Admin panel ──────────────────────────────────────────────────
+//
+// A provider is an upstream data supplier we route orders to. Each
+// provider has its own wallet balance, health and a cost per plan; the
+// admin panel uses those to work out the margin and to pick who takes an
+// order.
+
+model Provider {
+  id            String    @id @default(uuid())
+  name          String    @unique
+  isActive      Boolean   @default(true) // switched on by the admin
+  isDown        Boolean   @default(false) // an outage — orders skip it
+  // The provider's own wallet, in Naira. Orders are skipped when it is low.
+  walletBalance Int       @default(0)
+  // Uptime reported by the health checks, 0-100.
+  uptimePercent Float     @default(99)
+  lastFailureAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  costs        ProviderPlanCost[]
+  transactions Transaction[]
+}
+
+// What one provider charges for one plan. A plan with no cost row cannot
+// be sold by that provider.
+model ProviderPlanCost {
+  id         String @id @default(uuid())
+  providerId String
+  planId     String
+  cost       Int    // in Naira
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  plan     DataPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, planId])
+  @@index([planId])
+}
+
+// Key/value settings the admin panel can change (referral commission,
+// routing weights, …). Values are stored as strings.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Referral {
+  id          String   @id @default(uuid())
+  referrerId  String
+  friendId    String?
+  friendName  String
+  friendStatus String   // 'Active' | 'Pending'
+  earned      Int      @default(0) // in Naira
+  createdAt   DateTime @default(now())
+
+  referrer    User     @relation(fields: [referrerId], references: [id])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  body      String
+  date      DateTime @default(now())
+  letter    String   // 'D', 'W', 'N', 'S'
+  isRead    Boolean  @default(false)
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ── Auto-Buy ──────────────────────────────────────────────────────
+//
+// An Auto-Buy rule is a customer-created instruction: "buy this bundle,
+// for this number, on this schedule". The server owns the schedule so it
+// keeps running even when the customer's phone is off.
+//
+// Scheduling model
+// ----------------
+// Every rule is anchored on `anchorAt` — the very first slot. All later
+// slots are derived from it:
+//   * unit = hours  → anchor + n * interval hours (absolute time)
+//   * unit = days   → anchor + n * interval days, same wall-clock time
+//   * unit = weeks  → the selected weekdays of every n-th week
+//   * unit = months → the anchor's day-of-month, every n-th month
+//
+// `nextRunAt` is the next slot that should be attempted (UTC).
+// `daysOfWeek` uses ISO weekdays: 1 = Monday … 7 = Sunday.
+
+model AutoBuySchedule {
+  id          String   @id @default(uuid())
+  userId      String
+  network     String   // 'MTN' | 'Airtel' | 'Glo' | '9mobile'
+  planType    String   // 'SME' | 'Awoof' | …
+  planGb      String   // '1GB'
+  planDays    String   // '30 Days'
+  planId      String?  // DataPlan id — used to re-check price/availability
+  price       Int      // last known price in Naira
+  phone       String   // recipient number
+
+  frequency   String   // 'every_2_hours' | 'daily' | 'weekly' | 'monthly' | 'custom'
+  interval    Int      @default(1)
+  unit        String   @default("days") // 'hours' | 'days' | 'weeks' | 'months'
+  daysOfWeek  Int[]    // ISO weekday numbers (1 = Monday). Empty when unused.
+  timeOfDay   String   @default("08:00") // 'HH:mm' wall clock in `timezone`
+  timezone    String   @default("Africa/Lagos")
+
+  status      String   @default("Active") // 'Active' | 'Paused'
+  anchorAt    DateTime // UTC instant of the first slot
+  nextRunAt   DateTime // UTC instant of the next slot to attempt
+  // Logical slot of a pending retry. While a retry is outstanding this holds
+  // the original slot so the idempotency key (and the provider reference)
+  // stay stable across attempts.
+  pendingSlot DateTime?
+  lastRunAt   DateTime?
+  lockedUntil DateTime? // set while a worker is executing this schedule
+
+  consecutiveFailures Int @default(0)
+  maxRetries          Int @default(3)
+  consentAt           DateTime // explicit customer consent timestamp
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  executions AutoBuyExecution[]
+  transactions Transaction[]
+
+  @@index([status, nextRunAt])
+  @@index([userId])
+}
+
+model AutoBuyExecution {
+  id           String   @id @default(uuid())
+  scheduleId   String
+  userId       String
+  scheduledFor DateTime // the slot this execution belongs to
+  status       String   @default("Pending") // 'Pending' | 'Successful' | 'Failed' | 'Skipped'
+  amount       Int      @default(0) // amount charged (0 when nothing was charged)
+  ref          String?  @unique // transaction reference, unique per execution
+  error        String?
+  attempt      Int      @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  schedule AutoBuySchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Idempotency key: one execution row per schedule per slot. A second
+  // worker (or a retried cron call) can never charge the customer twice.
+  @@unique([scheduleId, scheduledFor])
+  @@index([userId, scheduledFor])
+}
