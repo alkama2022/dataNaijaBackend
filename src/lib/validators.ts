@@ -50,6 +50,25 @@ export const fundSchema = z.object({
   method: z.enum(['Card Payment', 'USSD']),
 })
 
+// ── Transaction reports ─────────────────────────────────────────────
+
+/** Every issue category the support flow accepts today. */
+export const transactionReportCategories = [
+  'Data or airtime not received',
+  'Incorrect transaction amount',
+  'Unexpected wallet deduction',
+  'Duplicate transaction',
+  'Transaction stuck on pending',
+  'Incorrect transaction status',
+  'Other issue',
+] as const
+
+export const transactionReportSchema = z.object({
+  transactionId: z.string().min(1, 'Transaction id is required'),
+  category: z.enum(transactionReportCategories),
+  message: z.string().max(1000, 'Message must be 1000 characters or fewer').optional(),
+})
+
 // ── Auto-Buy ─────────────────────────────────────────────────────
 
 /** Every frequency key the API accepts. Mirrors AUTO_BUY_FREQUENCIES. */

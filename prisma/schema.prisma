@@ -37,6 +37,7 @@ model User {
   notifications     Notification[]
   autoBuySchedules  AutoBuySchedule[]
   autoBuyExecutions AutoBuyExecution[]
+  transactionReports TransactionReport[]
 }
 
 model Transaction {
@@ -68,6 +69,27 @@ model Transaction {
   autoBuySchedule AutoBuySchedule?  @relation(fields: [autoBuyScheduleId], references: [id], onDelete: SetNull)
   provider        Provider?         @relation(fields: [providerId], references: [id], onDelete: SetNull)
   plan            DataPlan?         @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  reports         TransactionReport[]
+}
+
+// A customer-submitted issue about a transaction. Written to the support
+// pipeline when the customer taps "Report this Transaction".
+model TransactionReport {
+  id           String   @id @default(uuid())
+  transactionId String
+  userId       String
+  category    String // 'Data or airtime not received' | 'Incorrect transaction amount' | …
+  message     String?
+  status      String   @default("Received") // lifecycle owned by support
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@index([userId])
 }
 
 model Network {
