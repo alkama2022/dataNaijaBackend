@@ -4,8 +4,8 @@ import { verifyToken } from '@/lib/auth'
 
 /**
  * List the current user's transactions.
- * Query params: ?status=All|Successful|Pending|Failed&query=search text
- * Protected route.
+ * Query params: `?status=All|Successful|Pending|Failed&query=search text&skip=0&take=20`
+ * Protected route. Results are ordered by date descending (newest first).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -25,6 +25,8 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const statusFilter = searchParams.get('status') || 'All'
     const query = searchParams.get('q') || ''
+    const skip = Math.max(0, parseInt(searchParams.get('skip') || '0', 10) || 0)
+    const take = Math.min(100, Math.max(1, parseInt(searchParams.get('take') || '20', 10) || 20))
 
     const transactions = await prisma.transaction.findMany({
       where: {
@@ -40,6 +42,8 @@ export async function GET(request: NextRequest) {
           : {}),
       },
       orderBy: { date: 'desc' },
+      skip,
+      take,
     })
 
     return NextResponse.json(transactions)
