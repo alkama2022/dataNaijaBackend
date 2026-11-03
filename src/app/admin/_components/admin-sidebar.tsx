@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { signOutAction } from '../actions'
@@ -30,9 +31,8 @@ export function AdminSidebar({
     <nav className="side" aria-label="Admin">
       <div className="logo">
         <span className="lg" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff">
-            <path d="M13 3l-8 11h6l-1 7 8-11h-6z" />
-          </svg>
+          {/* Official DataNaija brand mark. */}
+          <Image src="/images/app_mark.png" alt="DataNaija" width={34} height={34} priority />
         </span>
         DataNaija
       </div>

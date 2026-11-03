@@ -5,6 +5,8 @@
  * `admin.css`.
  */
 
+import Image from 'next/image'
+
 /** The page title and the note on the right of the top bar. */
 export function PageHeader({
   title,
@@ -17,9 +19,13 @@ export function PageHeader({
 }) {
   return (
     <div className="top">
-      <div>
-        <h1 className="h1">{title}</h1>
-        <p className="mut">{subtitle}</p>
+      <div className="row">
+        {/* Official DataNaija brand mark. */}
+        <Image src="/images/app_mark.png" alt="DataNaija" width={36} height={36} />
+        <div>
+          <h1 className="h1">{title}</h1>
+          <p className="mut">{subtitle}</p>
+        </div>
       </div>
       <span className="tag">{tag}</span>
     </div>

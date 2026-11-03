@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import Image from 'next/image'
 import { getAdminUser } from '@/lib/admin/session'
 import { signInAction } from '../actions'
 
@@ -25,9 +26,13 @@ export default async function AdminSignInPage({
     >
       <main className="main" style={{ maxWidth: 420, width: '100%' }}>
         <div className="top">
-          <div>
-            <h1 className="h1">DataNaija Admin</h1>
-            <p className="mut">Sign in with your staff account.</p>
+          <div className="row">
+            {/* Official DataNaija brand mark. */}
+            <Image src="/images/app_mark.png" alt="DataNaija" width={44} height={44} priority />
+            <div>
+              <h1 className="h1">DataNaija Admin</h1>
+              <p className="mut">Sign in with your staff account.</p>
+            </div>
           </div>
         </div>
 
