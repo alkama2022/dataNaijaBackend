@@ -20,6 +20,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { selectProviderForPlan } from '@/lib/provider-routing'
 import { computeNextRun, type ScheduleSpec } from './schedule'
 import {
   buildTransactionRef,
@@ -288,6 +289,12 @@ async function executeSlot(args: ExecuteArgs): Promise<SlotOutcome> {
 
   const price = bundle.price
 
+  // Route the order to the provider the routing rules pick, so the recorded
+  // transaction can be traced back to the provider that delivered it.
+  const routing = bundle.planId
+    ? await selectProviderForPlan({ planId: bundle.planId, sellPrice: price })
+    : { providerId: null, cost: null, margin: null, ranked: [] }
+
   // ── 6. Balance check before the provider is contacted ────────────
   const user = await prisma.user.findUnique({
     where: { id: schedule.userId },
@@ -368,6 +375,7 @@ async function executeSlot(args: ExecuteArgs): Promise<SlotOutcome> {
           typeKey: 'd',
           date: now,
           autoBuyScheduleId: schedule.id,
+          providerId: routing.providerId,
         },
       })
 

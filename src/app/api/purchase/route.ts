@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/auth'
 import { purchaseSchema } from '@/lib/validators'
 import { PurchaseError, purchaseDataBundle } from '@/lib/purchases'
+import { creditReferralForPurchase } from '@/lib/referrals'
 
 /**
  * Purchase a data bundle.
@@ -47,6 +48,17 @@ export async function POST(request: NextRequest) {
       phone,
       idempotencyKey: request.headers.get('idempotency-key'),
     })
+
+    // A referred customer who just completed a purchase earns their referrer
+    // the first-purchase bonus, or the commission on every later purchase.
+    // Replayed purchases are skipped: the reward belongs to the first charge.
+    if (!result.replayed) {
+      await creditReferralForPurchase({
+        buyerId: (payload as { userId: string }).userId,
+        amount: Math.abs(result.transaction.amount),
+        cost: result.cost,
+      })
+    }
 
     return NextResponse.json({
       success: true,

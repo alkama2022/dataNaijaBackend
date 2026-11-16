@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { selectProviderForPlan } from '@/lib/provider-routing'
 
 /**
  * Buying a data bundle.
@@ -72,6 +73,10 @@ export interface PurchaseResult {
   newBalance: number
   /** True when this was a repeat of a purchase that already happened. */
   replayed: boolean
+  /** The provider the order was routed to, when one was available. */
+  providerId: string | null
+  /** The routed provider cost, in Naira. Profit = sale price - cost. */
+  cost: number | null
 }
 
 /**
@@ -213,6 +218,10 @@ export async function purchaseDataBundle(
         transaction: present(existing),
         newBalance: user?.balance ?? 0,
         replayed: true,
+        // The reward is only credited for a first charge; the replayed result
+        // carries no routing decision of its own.
+        providerId: null,
+        cost: null,
       }
     }
   }
@@ -238,6 +247,11 @@ export async function purchaseDataBundle(
 
   const price = plan.price
   const ref = generateReference()
+
+  // Route the order to the provider the routing rules pick. The customer is
+  // still charged the catalogue price; the routed cost is the profit baseline
+  // the referral commission is measured against.
+  const routing = await selectProviderForPlan({ planId: plan.id, sellPrice: plan.price })
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -267,6 +281,7 @@ export async function purchaseDataBundle(
           typeKey: 'd',
           date: new Date(),
           idempotencyKey: key,
+          providerId: routing.providerId,
         },
       })
 
@@ -278,6 +293,8 @@ export async function purchaseDataBundle(
       transaction: present(result.transaction),
       newBalance: result.newBalance,
       replayed: false,
+      providerId: routing.providerId,
+      cost: routing.cost,
     }
   } catch (error) {
     // A parallel request with the same key already did the work, and the
@@ -294,6 +311,8 @@ export async function purchaseDataBundle(
           transaction: present(existing),
           newBalance: updated?.balance ?? 0,
           replayed: true,
+          providerId: routing.providerId,
+          cost: routing.cost,
         }
       }
     }
