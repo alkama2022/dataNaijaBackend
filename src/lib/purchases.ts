@@ -23,6 +23,7 @@ import { selectProviderForPlan } from '@/lib/provider-routing'
 /** The reason a purchase could not be completed. */
 export type PurchaseFailure =
   | 'user-not-found'
+  | 'kyc-unverified'
   | 'bundle-unavailable'
   | 'insufficient-funds'
 
@@ -230,6 +231,9 @@ export async function purchaseDataBundle(
   if (!user) {
     throw new PurchaseError('user-not-found', 'User not found.', 404)
   }
+  if (!user.kycVerified) {
+    throw new PurchaseError('kyc-unverified', 'KYC verification is required before purchasing.', 403)
+  }
 
   const plan = await resolveBundle({
     network: input.network,
@@ -282,6 +286,7 @@ export async function purchaseDataBundle(
           date: new Date(),
           idempotencyKey: key,
           providerId: routing.providerId,
+          planId: plan.id,
         },
       })
 

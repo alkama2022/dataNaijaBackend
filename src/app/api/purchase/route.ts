@@ -3,6 +3,7 @@ import { verifyToken } from '@/lib/auth'
 import { purchaseSchema } from '@/lib/validators'
 import { PurchaseError, purchaseDataBundle } from '@/lib/purchases'
 import { creditReferralForPurchase } from '@/lib/referrals'
+import { consume } from '@/lib/rate-limit'
 
 /**
  * Purchase a data bundle.
@@ -38,6 +39,14 @@ export async function POST(request: NextRequest) {
     }
 
     const { network, type, dataType, phone, planId } = parsed.data
+
+    const rateLimit = consume(`purchase:${(payload as { userId: string }).userId}`, { limit: 5, windowMs: 60_000 })
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many purchase attempts. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rateLimit.retryAfterMs / 1000)) } }
+      )
+    }
 
     const result = await purchaseDataBundle({
       userId: (payload as { userId: string }).userId,

@@ -67,6 +67,7 @@ export async function createUser(
     isAdmin: boolean
     isSuspended: boolean
     role: string
+    kycVerified: boolean
   }> = {}
 ) {
   return await prisma.user.create({
@@ -80,6 +81,7 @@ export async function createUser(
       isAdmin: overrides.isAdmin ?? false,
       isSuspended: overrides.isSuspended ?? false,
       role: overrides.role ?? 'User',
+      kycVerified: overrides.kycVerified ?? false,
       referralCode: `REF${Math.floor(Math.random() * 1_000_000)}`,
     },
   })

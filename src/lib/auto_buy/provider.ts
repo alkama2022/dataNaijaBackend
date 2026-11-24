@@ -49,11 +49,31 @@ export interface ProviderPurchaseResult {
   error?: string
 }
 
+export interface ProviderDeliveryInput {
+  /** The deterministic reference of the scheduled slot. */
+  clientRef: string
+  /** The provider's own reference for the delivery, when it gave one. */
+  providerReference?: string | null
+  /** The recipient number. */
+  phone: string
+}
+
+export interface ProviderDeliveryResult {
+  success: boolean
+  error?: string
+}
+
 export interface DataProvider {
   /** Re-check the current price and availability of a bundle. */
   resolveBundle(input: BundleLookup): Promise<ResolvedBundle>
   /** Ask the upstream platform to deliver the bundle. */
   purchase(input: ProviderPurchaseInput): Promise<ProviderPurchaseResult>
+  /**
+   * Confirm the delivery after the purchase was accepted. Providers that
+   * cannot confirm simply omit it; the scheduler then treats an accepted
+   * purchase as delivered.
+   */
+  verifyDelivery?(input: ProviderDeliveryInput): Promise<ProviderDeliveryResult>
 }
 
 /**
@@ -122,10 +142,31 @@ export async function simulatePurchase(
   return { success: true, reference: `PRV${input.clientRef.slice(-8)}` }
 }
 
+/**
+ * Simulated delivery confirmation.
+ *
+ * `AUTO_BUY_SIMULATE_FAILURE=1` makes every delivery fail, mirroring the
+ * purchase simulation, so the retry policy can be rehearsed end to end.
+ */
+export async function simulateDelivery(
+  input: ProviderDeliveryInput
+): Promise<ProviderDeliveryResult> {
+  if (process.env.AUTO_BUY_SIMULATE_FAILURE === '1') {
+    return { success: false, error: 'Provider delivery failed.' }
+  }
+
+  if (!/^0[789][01]\d{8}$/.test(input.phone)) {
+    return { success: false, error: 'Invalid recipient number.' }
+  }
+
+  return { success: true }
+}
+
 /** The default provider used by the scheduler. */
 export const defaultDataProvider: DataProvider = {
   resolveBundle: resolveBundleFromCatalogue,
   purchase: simulatePurchase,
+  verifyDelivery: simulateDelivery,
 }
 
 /**

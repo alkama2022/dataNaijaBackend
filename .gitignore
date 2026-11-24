@@ -34,3 +34,5 @@ yarn-error.log*
 
 # prisma
 prisma/migrations
+
+AUDIT_FIXES.md

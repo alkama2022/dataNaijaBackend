@@ -46,7 +46,7 @@ export const purchaseSchema = z.object({
 })
 
 export const fundSchema = z.object({
-  amount: z.number().int().positive('Amount must be positive'),
+  amount: z.number().int().positive('Amount must be positive').max(5000000, 'Amount exceeds the maximum wallet funding limit'),
   method: z.enum(['Card Payment', 'USSD']),
 })
 

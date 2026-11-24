@@ -21,6 +21,7 @@
 
 import { prisma } from '@/lib/prisma'
 import { selectProviderForPlan } from '@/lib/provider-routing'
+import { creditReferralForPurchase } from '@/lib/referrals'
 import { computeNextRun, type ScheduleSpec } from './schedule'
 import {
   buildTransactionRef,
@@ -348,6 +349,29 @@ async function executeSlot(args: ExecuteArgs): Promise<SlotOutcome> {
     })
   }
 
+  // ── 7b. Confirm the delivery before any money moves ───────────
+  // The provider accepted the order; before the wallet is debited and the
+  // transaction recorded do we hear back that the data was delivered. When a
+  // provider cannot confirm, nothing is charged.
+  if (provider.verifyDelivery) {
+    const delivery = await provider.verifyDelivery({
+      clientRef,
+      providerReference: purchase.reference,
+      phone: schedule.phone,
+    })
+    if (!delivery.success) {
+      return fail({
+        schedule,
+        execution,
+        slot,
+        nextSlot,
+        now,
+        message: delivery.error ?? 'The delivery could not be confirmed.',
+        kind: 'provider',
+      })
+    }
+  }
+
   // ── 8. Charge the wallet and record the transaction together ─────
   try {
     await prisma.$transaction(async (tx) => {
@@ -376,6 +400,7 @@ async function executeSlot(args: ExecuteArgs): Promise<SlotOutcome> {
           date: now,
           autoBuyScheduleId: schedule.id,
           providerId: routing.providerId,
+          planId: schedule.planId,
         },
       })
 
@@ -426,6 +451,15 @@ async function executeSlot(args: ExecuteArgs): Promise<SlotOutcome> {
   }
 
   // ── 9. Success ───────────────────────────────────────────────────
+  // A referred customer who just completed an automatic purchase earns their
+  // referrer the first-purchase bonus, or the commission on every later purchase.
+  // Replayed slots never reach this point, so the reward belongs to the first charge.
+  await creditReferralForPurchase({
+    buyerId: schedule.userId,
+    amount: price,
+    cost: routing.cost,
+  })
+
   await prisma.autoBuySchedule.update({
     where: { id: schedule.id },
     data: {

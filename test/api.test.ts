@@ -144,8 +144,34 @@ describe('Purchase API', () => {
     expect(response.status).toBe(401)
   })
 
-  test('POST /api/purchase debits the wallet and records the transaction', async () => {
+  test('POST /api/purchase refuses to buy before KYC verification', async () => {
     const user = await createUser({ balance: 5000 })
+    const headers = await authHeader(user.id)
+
+    const response = await purchase(
+      jsonRequest(
+        'POST',
+        `${BASE}/api/purchase`,
+        { network: 'MTN', type: '1GB - 30 Days', dataType: 'SME', price: 300, phone: '08012345678' },
+        headers
+      )
+    )
+
+    expect(response.status).toBe(403)
+    const body = await response.json()
+    expect(body.error).toContain('KYC verification is required')
+
+    const updated = await prisma.user.findUnique({ where: { id: user.id } })
+    expect(updated?.balance).toBe(5000)
+
+    const transactions = await prisma.transaction.findMany({
+      where: { userId: user.id },
+    })
+    expect(transactions).toHaveLength(0)
+  })
+
+  test('POST /api/purchase debits the wallet and records the transaction', async () => {
+    const user = await createUser({ balance: 5000, kycVerified: true })
     const headers = await authHeader(user.id)
 
     const response = await purchase(
@@ -174,7 +200,7 @@ describe('Purchase API', () => {
   })
 
   test('POST /api/purchase refuses to spend more than the balance', async () => {
-    const user = await createUser({ balance: 100 })
+    const user = await createUser({ balance: 100, kycVerified: true })
     const headers = await authHeader(user.id)
 
     const response = await purchase(

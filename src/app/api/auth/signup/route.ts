@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { signupSchema } from '@/lib/validators'
 import { signToken } from '@/lib/auth'
+import { consume } from '@/lib/rate-limit'
 import bcrypt from 'bcryptjs'
 
 /**
@@ -21,6 +22,18 @@ export async function POST(request: NextRequest) {
     }
 
     const { fullName, phone, email, password } = parsed.data
+
+    const signupIp =
+      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+      request.headers.get('x-real-ip') ??
+      'unknown'
+    const rateLimit = consume(`signup:${signupIp}`, { limit: 5, windowMs: 60 * 60_000 })
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many sign-up attempts. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rateLimit.retryAfterMs / 1000)) } }
+      )
+    }
 
     // Check if phone or email already exists
     const existing = await prisma.user.findFirst({

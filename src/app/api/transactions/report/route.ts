@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyToken } from '@/lib/auth'
 import { transactionReportSchema } from '@/lib/validators'
+import { consume } from '@/lib/rate-limit'
 
 /**
  * Submit a transaction report (support ticket).
@@ -39,6 +40,14 @@ export async function POST(request: NextRequest) {
     }
 
     const { transactionId, category, message } = parsed.data
+
+    const rateLimit = consume(`report:${(payload as { userId: string }).userId}`, { limit: 5, windowMs: 60 * 60_000 })
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many reports. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rateLimit.retryAfterMs / 1000)) } }
+      )
+    }
 
     const transaction = await prisma.transaction.findFirst({
       where: {

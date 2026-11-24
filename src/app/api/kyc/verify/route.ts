@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyToken } from '@/lib/auth'
 import { kycSchema } from '@/lib/validators'
+import { verifyKycIdentity } from '@/lib/kyc'
+import { consume } from '@/lib/rate-limit'
 
 /**
  * Submit KYC (BVN or NIN) for verification.
  * Protected route.
  *
- * This simulates a verification partner check. In production you would call
- * a real identity verification API (NIBSS, NIMC, or a third-party provider)
- * here before setting kycVerified = true.
+ * The verification itself is delegated to a real identity provider. The
+ * account is only marked verified when that provider confirms; a failed or
+ * unconfigured provider never marks the account verified.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -35,10 +37,23 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { type, id, consent } = parsed.data
+    const { type, id } = parsed.data
 
-    // Simulated verification delay and success
-    await new Promise((resolve) => setTimeout(resolve, 1400))
+    const rateLimit = consume(`kyc:${(payload as { userId: string }).userId}`, { limit: 3, windowMs: 60 * 60_000 })
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many verification attempts. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rateLimit.retryAfterMs / 1000)) } }
+      )
+    }
+
+    const verification = await verifyKycIdentity({ type, id })
+    if (!verification.verified) {
+      return NextResponse.json(
+        { success: false, verified: false, error: verification.error ?? 'Verification failed.' },
+        { status: 400 }
+      )
+    }
 
     const user = await prisma.user.update({
       where: { id: (payload as { userId: string }).userId },

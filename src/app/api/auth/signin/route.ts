@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { signinSchema } from '@/lib/validators'
 import { signToken } from '@/lib/auth'
+import { consume } from '@/lib/rate-limit'
 import bcrypt from 'bcryptjs'
 
 /**
@@ -23,6 +24,14 @@ export async function POST(request: NextRequest) {
     }
 
     const { phone, password } = parsed.data
+
+    const rateLimit = consume(`signin:${phone}`, { limit: 5, windowMs: 15 * 60_000 })
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many sign-in attempts. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rateLimit.retryAfterMs / 1000)) } }
+      )
+    }
 
     const user = await prisma.user.findUnique({ where: { phone } })
     if (!user) {

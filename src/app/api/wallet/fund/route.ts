@@ -2,14 +2,21 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyToken } from '@/lib/auth'
 import { fundSchema } from '@/lib/validators'
+import { generateReference } from '@/lib/purchases'
+import { createPayment, isGatewayConfigured } from '@/lib/payments'
+import { consume } from '@/lib/rate-limit'
 
 /**
- * Fund the wallet (simulated).
+ * Fund the wallet.
  * Protected route.
  *
- * In production this would integrate with a real payment gateway (Paystack,
- * Flutterwave, etc.) and verify the webhook before crediting. For now it
- * simulates an instant credit, matching the Flutter demo behavior.
+ * When a live payment gateway is configured (`PAYSTACK_SECRET_KEY`), this
+ * endpoint only creates a hosted payment and returns the `authorizationUrl`
+ * the customer pays through. The wallet is credited later, after the gateway
+ * confirms — through `/api/wallet/fund/verify` or the Paystack webhook.
+ *
+ * When no gateway is configured the route falls back to the local
+ * development simulation, so the app can run without external services.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -44,7 +51,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
-    const ref = 'DN' + Date.now().toString().slice(-9)
+    // Live gateway mode: create the hosted payment. No credit happens here.
+    if (isGatewayConfigured()) {
+      const payment = await createPayment({
+        amount,
+        email: user.email ?? `${user.phone}@datanaija.local`,
+      })
+
+      return NextResponse.json({
+        success: false,
+        requiresPayment: true,
+        authorizationUrl: payment.authorizationUrl,
+        reference: payment.reference,
+        amount,
+      })
+    }
+
+    // Development fallback: simulated instant credit.
+    const ref = generateReference()
+
+    const rateLimit = consume(`fund:${user.id}`, { limit: 3, windowMs: 60 * 60_000 })
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: 'Too many funding attempts. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rateLimit.retryAfterMs / 1000)) } }
+      )
+    }
 
     // Credit balance and create transaction atomically
     const result = await prisma.$transaction([
